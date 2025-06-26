@@ -24,8 +24,8 @@
 
 #define AIN0  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,0)))	// PA0
 #define AIN1 *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,1)))	// PA1
-#define AIN2  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,2)))	// PA2
-#define AIN3  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,3)))	// PA3
+#define AIN2  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,2)))	// PA2 (UART2)
+#define AIN3  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,3)))	// PA3 (UART2)
 #define AIN4  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,4)))	// PA4
 #define D11  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,5)))	// PA5
 #define AIN6  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,6)))	// PA6
@@ -40,15 +40,22 @@ typedef struct SensorData
 } SensorData;
 
 
-
-
-
-
 class Cortex_STM32F103
 {
-    private:
+    protected:
         SensorData sensorData;
-        
+
+    void setTemperature(float temp);
+    void setHumidity(float hum);
+    void setTime(const std::string& timeStr);
+
+    float getTemperature() const;
+    float getHumidity() const;
+    std::string getTime() const;
+
+    virtual void update();
+
+    virtual ~Cortex_STM32F103() = default;
 };
 
 
