@@ -10,10 +10,12 @@ UART_HandleTypeDef huart1;
 #define RX_LEN 100
 uint8_t rxBuffer[RX_LEN];
 
-extern "C" int _write(int file, char *ptr, int len)
+int _write(int file, char *ptr, int len)
 {
     for (int i = 0; i < len; i++) {
-        ITM_SendChar(*ptr++);
+        while (!(ITM->TCR & ITM_TCR_ITMENA_Msk));    // ITM enabled?
+        while (!(ITM->TER & (1UL << 0)));            // Stimulus Port 0 enabled?
+        ITM->PORT[0].u8 = (uint8_t)(*ptr++);
     }
     return len;
 }
@@ -102,6 +104,15 @@ void ITM_SendString(const char* str)
     while (*str) ITM_SendChar((uint8_t)*str++);
 }
 
+void ITM_Init(void)
+{
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    ITM->LAR = 0xC5ACCE55;
+    ITM->TCR = 0x00010005;
+    ITM->TER = 0x00000001;
+}
+
+
 int main(void)
 {
     HAL_Init();             // HAL initialisieren
@@ -111,7 +122,9 @@ int main(void)
 
     while (true) {
         sendCommand("AT");
-        HAL_Delay(500);         // Kurze Wartezeit
+        HAL_Delay(500);
+        ITM_Init();
+        // Kurze Wartezeit
 
         const char* response = receive();
 
