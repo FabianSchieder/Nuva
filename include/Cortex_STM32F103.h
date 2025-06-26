@@ -11,6 +11,8 @@
 
 #include <string>
 
+#define BITBAND_PERI(addr, bit) ((volatile uint32_t *)(0x42000000 + (((uint32_t)(addr) - 0x40000000) * 32) + ((bit) * 4)))
+
 
 #define D0  *((volatile unsigned long *)(BITBAND_PERI(GPIOC_IDR,0)))		// PC0
 #define D1  *((volatile unsigned long *)(BITBAND_PERI(GPIOC_IDR,1)))	 	// PC1
@@ -22,10 +24,10 @@
 #define D7  *((volatile unsigned long *)(BITBAND_PERI(GPIOC_IDR,13)))	    // PC13
 
 
-#define AIN0  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,0)))	// PA0
-#define AIN1 *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,1)))	// PA1
-#define AIN2  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,2)))	// PA2 (UART2)
-#define AIN3  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,3)))	// PA3 (UART2)
+#define AIN0  *((volatile unsigned long *)(BITBAND_PERI((uint32_t)&GPIOA->ODR,0)))
+#define AIN1  *((volatile unsigned long *)(BITBAND_PERI((uint32_t)&GPIOA->ODR,1)))
+#define AIN2  *((volatile unsigned long *)(BITBAND_PERI((uint32_t)&GPIOA->ODR,2)))
+#define AIN3  *((volatile unsigned long *)(BITBAND_PERI((uint32_t)&GPIOA->ODR,3)))
 #define AIN4  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,4)))	// PA4
 #define D11  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,5)))	// PA5
 #define AIN6  *((volatile unsigned long *)(BITBAND_PERI(GPIOA_ODR,6)))	// PA6

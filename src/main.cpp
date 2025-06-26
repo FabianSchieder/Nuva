@@ -1,27 +1,100 @@
 #include "stm32f1xx.h"
+#include <cstdio>
+#include <cstring>
 
-void delay_ms(uint32_t ms) {
-    SysTick->LOAD = 72000 - 1; // 72 MHz → 1 ms
-    SysTick->VAL = 0;
-    SysTick->CTRL = SysTick_CTRL_CLKSOURCE_Msk | SysTick_CTRL_ENABLE_Msk;
+#include "Cortex_STM32F103.h"
+#include "stm32f1xx_hal.h"
 
-    for (uint32_t i = 0; i < ms; i++) {
-        while (!(SysTick->CTRL & SysTick_CTRL_COUNTFLAG_Msk));
-    }
+UART_HandleTypeDef huart1;
 
-    SysTick->CTRL = 0;
+#define RX_LEN 100
+uint8_t rxBuffer[RX_LEN];
+
+
+void sendCommand(const char* cmd)
+{
+    HAL_UART_Transmit(&huart1, (uint8_t*)cmd, strlen(cmd), HAL_MAX_DELAY);
+    HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
 }
 
-int main(void) {
-    // Clock für GPIOC aktivieren
-    RCC->APB2ENR |= RCC_APB2ENR_IOPCEN;
+void SystemClock_Config(void)
+{
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-    // PC0 als Push-Pull Output, max 2 MHz
-    GPIOC->CRL &= ~(GPIO_CRL_MODE0 | GPIO_CRL_CNF0);
+    // HSI einschalten
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI_DIV2;
+    RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL16;
+    HAL_RCC_OscConfig(&RCC_OscInitStruct);
 
-    while (1)
-    {
-        GPIOC->ODR ^= GPIO_ODR_ODR0;  // Toggle PC0
-        delay_ms(200);               // 500 ms Pause
-    }
+    // PLL als System Clock
+    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+    HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2);
 }
+
+
+void MX_USART1_UART_Init(void)
+{
+    __HAL_RCC_USART1_CLK_ENABLE();
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+
+    // PA9 = TX, PA10 = RX
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    GPIO_InitStruct.Pin = AIN2;  // TX
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = AIN3; // RX
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    huart1.Instance = USART1;
+    huart1.Init.BaudRate = 115200;
+    huart1.Init.WordLength = UART_WORDLENGTH_8B;
+    huart1.Init.StopBits = UART_STOPBITS_1;
+    huart1.Init.Parity = UART_PARITY_NONE;
+    huart1.Init.Mode = UART_MODE_TX_RX;
+    huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+
+    HAL_UART_Init(&huart1);
+}
+
+
+
+const char* receive()
+{
+    memset(rxBuffer, 0, sizeof(rxBuffer));
+    HAL_UART_Receive(&huart1, rxBuffer, sizeof(rxBuffer), HAL_MAX_DELAY);
+    return (const char*)rxBuffer;
+}
+
+int main(void)
+{
+    HAL_Init();             // HAL initialisieren
+    SystemClock_Config();   // Systemtakt setzen (je nach Projekt)
+
+    MX_USART1_UART_Init();  // UART1 konfigurieren
+
+    sendCommand("AT");
+    HAL_Delay(500);         // Kurze Wartezeit
+
+    const char* response = receive();
+
+    // Optional: hier debuggen
+    snprintf((char*)rxBuffer, RX_LEN, "%s", response);
+}
+
