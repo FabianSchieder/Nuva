@@ -101,15 +101,17 @@ int main(void)
 
     MX_USART1_UART_Init();  // UART1 konfigurieren
 
-    sendCommand("AT");
-    HAL_Delay(500);         // Kurze Wartezeit
+    while (true) {
+        sendCommand("AT");
+        HAL_Delay(500);         // Kurze Wartezeit
 
-    const char* response = receive();
+        const char* response = receive();
 
-    ITM_SendString(response);
+        ITM_SendString(response);
 
-    // Optional: hier debuggen
-    snprintf((char*)rxBuffer, RX_LEN, "%s", response);
+        // Optional: hier debuggen
+        snprintf((char*)rxBuffer, RX_LEN, "%s", response);
+    }
 
 }
 
