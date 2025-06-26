@@ -10,6 +10,14 @@ UART_HandleTypeDef huart1;
 #define RX_LEN 100
 uint8_t rxBuffer[RX_LEN];
 
+extern "C" int _write(int file, char *ptr, int len)
+{
+    for (int i = 0; i < len; i++) {
+        ITM_SendChar(*ptr++);
+    }
+    return len;
+}
+
 
 void sendCommand(const char* cmd)
 {
@@ -111,6 +119,8 @@ int main(void)
 
         // Optional: hier debuggen
         snprintf((char*)rxBuffer, RX_LEN, "%s", response);
+
+        printf("%s", response);
     }
 
 }
