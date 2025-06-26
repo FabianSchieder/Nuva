@@ -34,3 +34,5 @@ v
 
 ## UART2
 
+![pinning.png](pinning.png)
+
