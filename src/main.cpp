@@ -82,6 +82,18 @@ const char* receive()
     return (const char*)rxBuffer;
 }
 
+
+static inline void ITM_SendChar(uint8_t ch)
+{
+    while (!(ITM->PORT[0].u32 & 1));
+    ITM->PORT[0].u8 = ch;
+}
+
+void ITM_SendString(const char* str)
+{
+    while (*str) ITM_SendChar((uint8_t)*str++);
+}
+
 int main(void)
 {
     HAL_Init();             // HAL initialisieren
@@ -94,7 +106,10 @@ int main(void)
 
     const char* response = receive();
 
+    ITM_SendString(response);
+
     // Optional: hier debuggen
     snprintf((char*)rxBuffer, RX_LEN, "%s", response);
+
 }
 
