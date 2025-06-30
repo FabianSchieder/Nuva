@@ -102,7 +102,55 @@ Generiere einen API-Key auf [WeatherAPI](https://www.weatherapi.com/) (kostenlos
 
 ---
 
-## ...
+```json
+{
+  "location": {
+    "name": "Retz",
+    "region": "Niederosterreich",
+    "country": "Austria",
+    "lat": 48.75,
+    "lon": 15.95,
+    "tz_id": "Europe/Vienna",
+    "localtime_epoch": 1751294586,
+    "localtime": "2025-06-30 16:43"
+  },
+  "current": {
+    "last_updated_epoch": 1751293800,
+    "last_updated": "2025-06-30 16:30",
+    "temp_c": 26.2,
+    "temp_f": 79.2,
+    "is_day": 1,
+    "condition": {
+      "text": "Sunny",
+      "icon": "//cdn.weatherapi.com/weather/64x64/day/113.png",
+      "code": 1000
+    },
+    "wind_mph": 13.2,
+    "wind_kph": 21.2,
+    "wind_degree": 351,
+    "wind_dir": "N",
+    "pressure_mb": 1020.0,
+    "pressure_in": 30.12,
+    "precip_mm": 0.0,
+    "precip_in": 0.0,
+    "humidity": 23,
+    "cloud": 0,
+    "feelslike_c": 25.4,
+    "feelslike_f": 77.7,
+    "windchill_c": 27.3,
+    "windchill_f": 81.2,
+    "heatindex_c": 26.3,
+    "heatindex_f": 79.3,
+    "dewpoint_c": 7.6,
+    "dewpoint_f": 45.7,
+    "vis_km": 10.0,
+    "vis_miles": 6.0,
+    "uv": 4.9,
+    "gust_mph": 16.7,
+    "gust_kph": 26.9
+  }
+}
+```
 
 
 
