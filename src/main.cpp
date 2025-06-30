@@ -211,21 +211,25 @@ int main() {
     // --- 7) Ringpuffer → Flat-Array kopieren ---
     uart2_read_all(fullResponse, sizeof(fullResponse));
 
-    char* jsonStart = strstr(fullResponse, "\r\n\r\n");
+    char* objStart = strchr(fullResponse, '{');
 
-    if (!jsonStart)
+    if (!objStart)
     {
         sendU2("Keine JSON Antwort gefunden");
         while (1);
     }
 
-    jsonStart += 4; // hinter Header
+    objStart += 4; // hinter Header
+
+    char jsonOnly[1024];
+    strncpy(jsonOnly, objStart, sizeof(jsonOnly) - 1);
+    jsonOnly[sizeof(jsonOnly) - 1] = '\0';
 
     jsmn_parser parser;
     jsmntok_t tokens[256];
     jsmn_init(&parser);
 
-    int token_count = jsmn_parse(&parser, jsonStart, strlen(jsonStart), tokens, 256);
+    int token_count = jsmn_parse(&parser, jsonOnly, strlen(jsonOnly), tokens, 256);
 
     if (token_count < 0) {
         sendU2("Parse-Fehler\r\n");
