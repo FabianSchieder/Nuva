@@ -1,140 +1,99 @@
-#include "stm32f1xx.h"
 #include <cstdio>
-#include <cstring>
+#include <string.h>
+#include "stm32f1xx.h"   // CMSIS-Header für STM32F1
 
-#include "Cortex_STM32F103.h"
-#include "stm32f1xx_hal.h"
 
-UART_HandleTypeDef huart1;
+/// ------ Delay ------------------------------
 
-#define RX_LEN 100
-uint8_t rxBuffer[RX_LEN];
+volatile uint32_t systick_ms = 0;
 
-int _write(int file, char *ptr, int len)
-{
-    for (int i = 0; i < len; i++) {
-        while (!(ITM->TCR & ITM_TCR_ITMENA_Msk));    // ITM enabled?
-        while (!(ITM->TER & (1UL << 0)));            // Stimulus Port 0 enabled?
-        ITM->PORT[0].u8 = (uint8_t)(*ptr++);
+// SysTick-Handler (wird alle 1 ms aufgerufen)
+extern "C" void SysTick_Handler(void) {
+    systick_ms++;
+}
+
+// Initialisierung des SysTick-Timers für 1 ms Takt
+void SysTick_Init(void) {
+    SysTick->LOAD = 8000 - 1; // 8 MHz / 8000 = 1 kHz = 1 ms
+    SysTick->VAL = 0;
+    SysTick->CTRL = SysTick_CTRL_CLKSOURCE_Msk | SysTick_CTRL_TICKINT_Msk | SysTick_CTRL_ENABLE_Msk;
+}
+
+// Sichere Delay-Funktion (blockierend, aber interrupt-freundlich)
+void delay(uint32_t ms) {
+    uint32_t start = systick_ms;
+    while ((systick_ms - start) < ms) {
+        __NOP();
     }
-    return len;
 }
 
+/// -------------------------------------------------------
 
-void sendCommand(const char* cmd)
+// UART2 (PA2=TX, PA3=RX) – dein bestehendes Setup
+void UART2_Init(void)
 {
-    HAL_UART_Transmit(&huart1, (uint8_t*)cmd, strlen(cmd), HAL_MAX_DELAY);
-    HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
+    // 1) Clock für GPIOA + AFIO + USART2
+    RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_AFIOEN;
+    RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
+    // 2) PA2 = AF Push‑Pull, 50 MHz
+    GPIOA->CRL &= ~(GPIO_CRL_MODE2 | GPIO_CRL_CNF2);
+    GPIOA->CRL |= (0b11 << GPIO_CRL_MODE2_Pos) | (0b10 << GPIO_CRL_CNF2_Pos);
+    // 3) PA3 = Floating Input
+    GPIOA->CRL &= ~(GPIO_CRL_MODE3 | GPIO_CRL_CNF3);
+    GPIOA->CRL |= (0b01 << GPIO_CRL_CNF3_Pos);
+    // 4) Baudrate 115200 @ 8 MHz HSI (APB1 = 8 MHz)
+    USART2->BRR = 8000000 / 115200; // ≈69
+    // 5) TE + RE + UE
+    USART2->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
 }
 
-void SystemClock_Config(void)
+// Sende ein Zeichen über UART3
+static inline void UART3_SendChar(char c)
 {
-    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-
-    // HSI einschalten
-    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI_DIV2;
-    RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL16;
-    HAL_RCC_OscConfig(&RCC_OscInitStruct);
-
-    // PLL als System Clock
-    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
-                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
-    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
-
-    HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2);
+    while (!(USART3->SR & USART_SR_TXE));
+    USART3->DR = c;
 }
 
-
-void MX_USART1_UART_Init(void)
+// Lese ein Zeichen von UART2 (polling)
+static inline char UART2_ReadChar(void)
 {
-    __HAL_RCC_USART1_CLK_ENABLE();
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-
-    // PA9 = TX, PA10 = RX
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    GPIO_InitStruct.Pin = AIN2;  // TX
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = AIN3; // RX
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    huart1.Instance = USART1;
-    huart1.Init.BaudRate = 115200;
-    huart1.Init.WordLength = UART_WORDLENGTH_8B;
-    huart1.Init.StopBits = UART_STOPBITS_1;
-    huart1.Init.Parity = UART_PARITY_NONE;
-    huart1.Init.Mode = UART_MODE_TX_RX;
-    huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-    huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-
-    HAL_UART_Init(&huart1);
+    while (!(USART2->SR & USART_SR_RXNE));
+    return (char)(USART2->DR & 0xFF);
 }
 
+const char* host = "api.weatherapi.com";
+const char* path = "/v1/current.json?key=b27d29b85f7b43d9993215104252906&q=Retz&aqi=no";
 
+int main(void) {
+    SysTick_Init();
+    UART2_Init();
 
-const char* receive()
-{
-    memset(rxBuffer, 0, sizeof(rxBuffer));
-    HAL_UART_Receive(&huart1, rxBuffer, sizeof(rxBuffer), HAL_MAX_DELAY);
-    return (const char*)rxBuffer;
+    // 1. TCP-Verbindung aufbauen
+    sendAT("AT+CIPSTART=\"TCP\",\"api.weatherapi.com\",80\r\n");
+    delay(2000); // Warte auf CONNECT & OK
+
+    // 2. Länge des HTTP-Requests berechnen
+    char httpRequest[256];
+    sprintf(httpRequest,
+        "GET %s HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "Connection: close\r\n"
+        "\r\n", path, host);
+
+    int len = strlen(httpRequest);
+
+    // 3. CIPSEND mit korrekter Länge senden
+    char cipsendCmd[30];
+    sprintf(cipsendCmd, "AT+CIPSEND=%d\r\n", len);
+    sendAT(cipsendCmd);
+
+    // 4. Auf '>' warten (muss implementiert werden, hier Delay als Platzhalter)
+    delay(500);
+
+    // 5. HTTP-Request senden
+    sendAT(httpRequest);
+
+    // 6. Antwort vom Server lesen und parsen (muss noch implementiert werden)
 }
 
-
-static inline void ITM_SendChar(uint8_t ch)
-{
-    while (!(ITM->PORT[0].u32 & 1));
-    ITM->PORT[0].u8 = ch;
-}
-
-void ITM_SendString(const char* str)
-{
-    while (*str) ITM_SendChar((uint8_t)*str++);
-}
-
-void ITM_Init(void)
-{
-    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-    ITM->LAR = 0xC5ACCE55;
-    ITM->TCR = 0x00010005;
-    ITM->TER = 0x00000001;
-}
-
-
-int main(void)
-{
-    HAL_Init();             // HAL initialisieren
-    SystemClock_Config();   // Systemtakt setzen (je nach Projekt)
-
-    MX_USART1_UART_Init();  // UART1 konfigurieren
-
-    while (true) {
-        sendCommand("AT");
-        HAL_Delay(500);
-        ITM_Init();
-        // Kurze Wartezeit
-
-        const char* response = receive();
-
-        ITM_SendString(response);
-
-        // Optional: hier debuggen
-        snprintf((char*)rxBuffer, RX_LEN, "%s", response);
-
-        printf("%s", response);
-    }
-
-}
 
