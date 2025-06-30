@@ -117,9 +117,11 @@ typedef struct
 // Return: pointer auf outBuf oder NULL bei Fehler
 
 int jsoneq(const char *json, jsmntok_t *tok, const char *s) {
-    return (tok->type == JSMN_STRING && (int)strlen(s) == tok->end - tok->start
-            && strncmp(json + tok->start, s, tok->end - tok->start) == 0) ? 0 : -1;
+    return (tok->type == JSMN_STRING &&
+            (int)strlen(s) == tok->end - tok->start &&
+            strncmp(json + tok->start, s, tok->end - tok->start) == 0) ? 0 : -1;
 }
+
 
 char* extract_named_json_object(const char* jsonStr, const char* key, char* outBuf, int bufSize) {
     char pattern[64];
@@ -215,46 +217,35 @@ int main() {
     jsonStart += 4; // hinter Header
 
     jsmn_parser parser;
-    jsmntok_t tokens[128];
+    jsmntok_t tokens[256];
     jsmn_init(&parser);
 
-    int token_count = jsmn_parse(&parser, jsonStart, strlen(jsonStart), tokens, sizeof(tokens)/sizeof(tokens[0]));
+    int token_count = jsmn_parse(&parser, jsonStart, strlen(jsonStart), tokens, 256);
+
     if (token_count < 0) {
-        sendU2("JSON Parsing Fehler\r\n");
-        while(1);
-    }
-    if (token_count < 1 || tokens[0].type != JSMN_OBJECT) {
-        sendU2("Root ist kein Objekt\r\n");
-        while(1);
+        sendU2("Parse-Fehler\r\n");
+        return 1;
     }
 
-    // Root-Objekt: Paare aus Key (string) und Value (beliebig)
-    int i = 1;
-    while (i < token_count) {
-        jsmntok_t *key = &tokens[i++];
-        if (key->type != JSMN_STRING) break;  // Fehlerfall
+    for (int i = 1; i < token_count; i++) {
+        if (jsoneq(jsonStart, &tokens[i], "current") == 0 && tokens[i+1].type == JSMN_OBJECT) {
+            int start = tokens[i+1].start;
+            int end   = tokens[i+1].end;
+            int len   = end - start;
 
-        jsmntok_t *val = &tokens[i++];
-
-        // Schlüssel extrahieren
-        int key_len = key->end - key->start;
-        if (key_len >= 64) key_len = 63;
-        char key_str[64] = {0};
-        strncpy(key_str, jsonStart + key->start, key_len);
-
-        // Wert extrahieren (als String)
-        int val_len = val->end - val->start;
-        if (val_len >= 256) val_len = 255;
-        char val_str[256] = {0};
-        strncpy(val_str, jsonStart + val->start, val_len);
-
-        sendU2("Key: ");
-        sendU2(key_str);
-        sendU2("\r\nValue: ");
-        sendU2(val_str);
-        sendU2("\r\n");
+            char locationJson[512];
+            if (len < sizeof(locationJson)) {
+                strncpy(locationJson, jsonStart + start, len);
+                locationJson[len] = '\0';
+                sendU2("Location JSON:\r\n");
+                sendU2(locationJson);
+            } else {
+                sendU2("location JSON zu groß\r\n");
+            }
+            break;
+        }
     }
 
-    while(1);
+
 
 }
