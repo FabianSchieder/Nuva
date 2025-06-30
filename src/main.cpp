@@ -3,6 +3,7 @@
 #include <string>
 
 #include "stm32f1xx.h"
+#include "jsmn.h"
 
 /// ------------ SysTick / Delay -----------------
 
@@ -115,6 +116,11 @@ typedef struct
 // outBuf: Zielpuffer, bufSize: Puffergröße
 // Return: pointer auf outBuf oder NULL bei Fehler
 
+int jsoneq(const char *json, jsmntok_t *tok, const char *s) {
+    return (tok->type == JSMN_STRING && (int)strlen(s) == tok->end - tok->start
+            && strncmp(json + tok->start, s, tok->end - tok->start) == 0) ? 0 : -1;
+}
+
 char* extract_named_json_object(const char* jsonStr, const char* key, char* outBuf, int bufSize) {
     char pattern[64];
     sprintf(pattern, "\"%s\":{", key);
@@ -199,29 +205,56 @@ int main() {
     uart2_read_all(fullResponse, sizeof(fullResponse));
 
     char* jsonStart = strstr(fullResponse, "\r\n\r\n");
-    if (jsonStart) {
-        jsonStart += 4; // JSON beginnt hier
 
-        char location[512];
-        char current[512];
-
-
-
-        if (extract_named_json_object(jsonStart, "location", location, sizeof(location))) {
-            sendU2("Location JSON:\r\n");
-            sendU2(location);
-        } else {
-            sendU2("Location nicht gefunden\r\n");
-        }
-
-        if (extract_named_json_object(jsonStart, "current", current, sizeof(current))) {
-            sendU2("Current JSON:\r\n");
-            sendU2(current);
-        } else {
-            sendU2("Current nicht gefunden\r\n");
-        }
-
-    } else {
-        sendU2("Keine JSON-Antwort gefunden.\r\n");
+    if (!jsonStart)
+    {
+        sendU2("Keine JSON Antwort gefunden");
+        while (1);
     }
+
+    jsonStart += 4; // hinter Header
+
+    jsmn_parser parser;
+    jsmntok_t tokens[128];
+    jsmn_init(&parser);
+
+    int token_count = jsmn_parse(&parser, jsonStart, strlen(jsonStart), tokens, sizeof(tokens)/sizeof(tokens[0]));
+    if (token_count < 0) {
+        sendU2("JSON Parsing Fehler\r\n");
+        while(1);
+    }
+    if (token_count < 1 || tokens[0].type != JSMN_OBJECT) {
+        sendU2("Root ist kein Objekt\r\n");
+        while(1);
+    }
+
+    // Root-Objekt: Paare aus Key (string) und Value (beliebig)
+    int i = 1;
+    while (i < token_count) {
+        jsmntok_t *key = &tokens[i++];
+        if (key->type != JSMN_STRING) break;  // Fehlerfall
+
+        jsmntok_t *val = &tokens[i++];
+
+        // Schlüssel extrahieren
+        int key_len = key->end - key->start;
+        if (key_len >= 64) key_len = 63;
+        char key_str[64] = {0};
+        strncpy(key_str, jsonStart + key->start, key_len);
+
+        // Wert extrahieren (als String)
+        int val_len = val->end - val->start;
+        if (val_len >= 256) val_len = 255;
+        char val_str[256] = {0};
+        strncpy(val_str, jsonStart + val->start, val_len);
+
+        sendU2("Key: ");
+        sendU2(key_str);
+        sendU2("\r\nValue: ");
+        sendU2(val_str);
+        sendU2("\r\n");
+    }
+
+    while(1);
+
 }
