@@ -155,20 +155,14 @@ char* extract_named_json_object(const char* jsonStr, const char* key, char* outB
 
 /// ------------ Main & Hintergrund‑Logging --------
 
-
-int main() {
-    SysTick_Init();
-    UART2_Init(115200);          // oder 9600, je nach ESP‑Setup
-
-    // Pufferpositionen (Head/Tail) bleiben erhalten,
-    // wir loggen **immer** alles mit.
-
+void requestWeatherData()
+{
     const char* host = "api.weatherapi.com";
     const char* path = "/v1/current.json?key=b27d29b85f7b43d9993215104252906&q=Retz&aqi=no";
 
     char  httpReq[256];
     char  cipsend[32];
-    char  fullResponse[RX_BUF_SIZE];
+
 
     // --- 1) NTP (optional) ---
     sendU2("AT+CIPSNTPCFG=1,2,\"pool.ntp.org\"\r\n");
@@ -196,6 +190,17 @@ int main() {
 
     // --- 5) HTTP senden ---
     sendU2(httpReq);
+}
+
+int main() {
+    SysTick_Init();
+    UART2_Init(115200);          // oder 9600, je nach ESP‑Setup
+    char  fullResponse[RX_BUF_SIZE];
+
+    // Pufferpositionen (Head/Tail) bleiben erhalten,
+    // wir loggen **immer** alles mit.
+
+    requestWeatherData();
 
     // --- 6) Warte, bis alles eingetroffen ist ---
     // (z. B. 5 s warten; passt je nach Datenmenge an)
