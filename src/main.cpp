@@ -61,6 +61,14 @@ static inline char UART2_ReadChar(void)
     return (char)(USART2->DR & 0xFF);
 }
 
+void sendAT(const char* cmd)
+{
+    while (*cmd) {
+        while (!(USART2->SR & USART_SR_TXE));
+        USART2->DR = *cmd++;
+    }
+}
+
 const char* host = "api.weatherapi.com";
 const char* path = "/v1/current.json?key=b27d29b85f7b43d9993215104252906&q=Retz&aqi=no";
 
