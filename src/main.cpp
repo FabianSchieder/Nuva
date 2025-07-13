@@ -1,19 +1,26 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
-
 #include "stm32f1xx.h"
-#include "jsmn.h"
+#include <vector>
 
-/// ------------ SysTick / Delay -----------------
+#define RX_BUF_SIZE 2048
 
+volatile char rx_buffer[RX_BUF_SIZE];
+volatile uint16_t rx_head = 0;
+volatile uint16_t rx_tail = 0;
 volatile uint32_t systick_ms = 0;
 
-extern "C" void SysTick_Handler(void) {
+void extractData(char*);
+void requestTime();
+
+extern "C" void SysTick_Handler(void)
+{
     systick_ms++;
 }
 
-void SysTick_Init() {
+void SysTick_Init()
+{
     // 8 MHz HSI → 1 kHz SysTick
     SysTick->LOAD = 8000 - 1;
     SysTick->VAL  = 0;
@@ -22,58 +29,61 @@ void SysTick_Init() {
                   | SysTick_CTRL_ENABLE_Msk;
 }
 
-void delay(uint32_t ms) {
+void delay(uint32_t ms)
+{
     uint32_t start = systick_ms;
-    while ((systick_ms - start) < ms) {
+
+    while ((systick_ms - start) < ms)
+    {
         __NOP();
     }
 }
 
-/// ------------ UART2 RX‑Ringpuffer -------------
-
-#define RX_BUF_SIZE 2048
-
-volatile char    rx_buffer[RX_BUF_SIZE];
-volatile uint16_t rx_head = 0;
-volatile uint16_t rx_tail = 0;
-
-extern "C" void USART2_IRQHandler(void) {
-    if (USART2->SR & USART_SR_RXNE) {
+extern "C" void USART2_IRQHandler(void)
+{
+    if (USART2->SR & USART_SR_RXNE)
+    {
         char c = static_cast<char>(USART2->DR);
         uint16_t next = (rx_head + 1) % RX_BUF_SIZE;
-        if (next != rx_tail) {
+
+        if (next != rx_tail)
+        {
             rx_buffer[rx_head] = c;
             rx_head = next;
         }
-        // else Überlauf: Zeichen verwerfen
     }
 }
 
-bool uart2_available() {
+bool uart2_available()
+{
     return rx_head != rx_tail;
 }
 
-// Liest genau **ein** Zeichen (oder 0, wenn leer)
-char uart2_read() {
+char uart2_read()
+{
     if (!uart2_available()) return 0;
     char c = rx_buffer[rx_tail];
     rx_tail = (rx_tail + 1) % RX_BUF_SIZE;
+
     return c;
 }
 
-// Liest **alle** verfügbaren Zeichen in dest[], terminiert mit '\0'
-int uart2_read_all(char* dest, int maxlen) {
+int uart2_read_all(char* dest, int maxlen)
+{
     int i = 0;
-    while (uart2_available() && i < (maxlen - 1)) {
+
+    while (uart2_available() && i < (maxlen - 1))
+    {
         dest[i++] = uart2_read();
     }
+
     dest[i] = '\0';
+
     return i;
 }
 
-/// ------------ UART2 init & TX -----------------
-
-void UART2_Init(uint32_t baud) {
+void UART2_Init(uint32_t baud)
+{
     // Clocks
     RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_AFIOEN;
     RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
@@ -96,165 +106,232 @@ void UART2_Init(uint32_t baud) {
     NVIC_EnableIRQ(USART2_IRQn);
 }
 
-void sendU2(const char* str) {
-    while (*str) {
+void sendU2(const char* str)
+{
+    while (*str)
+    {
         while (!(USART2->SR & USART_SR_TXE));
         USART2->DR = *str++;
     }
 }
 
+void sendU3(const char* str)
+{
+    while (*str) {
+        while (!(USART3->SR & USART_SR_TXE));
+        USART3->DR = *str++;
+    }
+}
+
+void UART3_Init(void)
+{
+    // 1) Clock für GPIOB + AFIO + USART3
+    RCC->APB2ENR |= RCC_APB2ENR_IOPBEN | RCC_APB2ENR_AFIOEN;
+    RCC->APB1ENR |= RCC_APB1ENR_USART3EN;
+
+    // 2) PB10 = TX: AF Push-Pull, 50 MHz
+    GPIOB->CRH &= ~(GPIO_CRH_MODE10 | GPIO_CRH_CNF10);
+    GPIOB->CRH |= (0b11 << GPIO_CRH_MODE10_Pos) | (0b10 << GPIO_CRH_CNF10_Pos);
+
+    // 3) PB11 = RX: Floating Input
+    GPIOB->CRH &= ~(GPIO_CRH_MODE11 | GPIO_CRH_CNF11);
+    GPIOB->CRH |= (0b01 << GPIO_CRH_CNF11_Pos);
+
+    // 4) Baudrate 115200 @ 8 MHz APB1
+    USART3->BRR = 8000000 / 115200; // ≈ 69
+
+    // 5) TE + RE + UE
+    USART3->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
+}
+
 typedef struct
 {
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t day;
+    uint8_t month;
+    uint8_t year;
+} Time;
+
+typedef struct
+{
+    // ------------ location ------------
+    Time localTime;
+
     std::string name;
     std::string region;
+    std::string country;
 
+    // ------------ current ------------
+    Time lastUpdated;
+    float tempC;
+    bool isDay;
 
-} WeatherData;
+    // ------------ condition ------------
+    std::string weather;
+} Data;
 
-// Findet und kopiert das JSON-Objekt für ein Schlüssel "key" aus jsonStr
-// Beispiel: key="location" -> sucht "location":{...}
-// outBuf: Zielpuffer, bufSize: Puffergröße
-// Return: pointer auf outBuf oder NULL bei Fehler
-
-int jsoneq(const char *json, jsmntok_t *tok, const char *s) {
-    return (tok->type == JSMN_STRING &&
-            (int)strlen(s) == tok->end - tok->start &&
-            strncmp(json + tok->start, s, tok->end - tok->start) == 0) ? 0 : -1;
-}
-
-
-char* extract_named_json_object(const char* jsonStr, const char* key, char* outBuf, int bufSize) {
-    char pattern[64];
-    sprintf(pattern, "\"%s\":{", key);
-
-    const char* keyPos = strstr(jsonStr, pattern);
-    if (!keyPos) return NULL;
-
-    const char* objStart = strchr(keyPos, '{');
-    if (!objStart) return NULL;
-
-    // Finde das passende schließende '}' (mit korrektem Matching)
-    int depth = 0;
-    const char* ptr = objStart;
-    while (*ptr) {
-        if (*ptr == '{') depth++;
-        else if (*ptr == '}') depth--;
-
-        if (depth == 0) break;
-        ptr++;
-    }
-
-    if (depth != 0) return NULL; // kein vollständiges Objekt gefunden
-
-    int len = ptr - objStart + 1;
-    if (len >= bufSize) return NULL;
-
-    memcpy(outBuf, objStart, len);
-    outBuf[len] = '\0';
-
-    return outBuf;
-}
-
-/// ------------ Main & Hintergrund‑Logging --------
-
-void requestWeatherData()
+void requestWeatherData(char* dest)
 {
     const char* host = "api.weatherapi.com";
     const char* path = "/v1/current.json?key=b27d29b85f7b43d9993215104252906&q=Retz&aqi=no";
 
-    char  httpReq[256];
-    char  cipsend[32];
+    char httpReq[256];
+    char cipsend[32];
 
+    // --- 1) Vorherige Verbindung schließen ---
+    sendU2("AT+CIPCLOSE\r\n");
+    delay(500);
+    uart2_read_all(dest, RX_BUF_SIZE); // Clear buffer
 
-    // --- 1) NTP (optional) ---
+    // --- 2) NTP aktivieren (optional) ---
     sendU2("AT+CIPSNTPCFG=1,2,\"pool.ntp.org\"\r\n");
-    delay(2000);
+    delay(500);
+    uart2_read_all(dest, RX_BUF_SIZE);
 
-    // --- 2) TCP aufbauen ---
+    // --- 3) TCP-Verbindung aufbauen ---
     sendU2("AT+CIPSTART=\"TCP\",\"api.weatherapi.com\",80\r\n");
-    delay(2000);
+    delay(500); // längeres Delay!
+    uart2_read_all(dest, RX_BUF_SIZE);
 
-    // --- 3) HTTP‑Request bauen ---
-    sprintf(httpReq,
-        "GET %s HTTP/1.1\r\n"
-        "Host: %s\r\n"
-        "Connection: close\r\n"
-        "\r\n",
-        path, host);
+    // --- 4) HTTP‑Request zusammenbauen ---
+    sprintf(httpReq, "GET %s HTTP/1.1\r\n" "Host: %s\r\n" "Connection: close\r\n" "\r\n", path, host);
     int len = strlen(httpReq);
 
-    // --- 4) CIPSEND senden ---
+    // --- 5) CIPSEND senden ---
     sprintf(cipsend, "AT+CIPSEND=%d\r\n", len);
     sendU2(cipsend);
+    delay(500); // auf '>' warten
+    uart2_read_all(dest, RX_BUF_SIZE); // Prompt abfangen
 
-    // Kleines Delay, damit ESP das '>' prompt ausgeben kann
-    delay(500);
-
-    // --- 5) HTTP senden ---
+    // --- 6) HTTP‑Request senden ---
     sendU2(httpReq);
+
+    // --- 7) Antwort lesen ---
+    delay(500); // auf komplette Antwort warten
+    uart2_read_all(dest, RX_BUF_SIZE);
 }
 
-int main() {
-    SysTick_Init();
-    UART2_Init(115200);          // oder 9600, je nach ESP‑Setup
-    char  fullResponse[RX_BUF_SIZE];
+char* extract_first_json_object(const char* input, char* outBuf, int bufSize)
+{
+    const char* p = strchr(input, '{');
+    if (!p) return NULL;
 
-    // Pufferpositionen (Head/Tail) bleiben erhalten,
-    // wir loggen **immer** alles mit.
+    int depth = 0;
+    int len = 0;
 
-    requestWeatherData();
-
-    // --- 6) Warte, bis alles eingetroffen ist ---
-    // (z. B. 5 s warten; passt je nach Datenmenge an)
-    delay(5000);
-
-    // --- 7) Ringpuffer → Flat-Array kopieren ---
-    uart2_read_all(fullResponse, sizeof(fullResponse));
-
-    char* objStart = strchr(fullResponse, '{');
-
-    if (!objStart)
+    while (*p && len < bufSize - 1)
     {
-        sendU2("Keine JSON Antwort gefunden");
-        while (1);
+        if (*p == '{') depth++;
+        if (*p == '}') depth--;
+
+        outBuf[len++] = *p++;
+
+        if (depth == 0) break;
     }
 
-    objStart += 4; // hinter Header
+    outBuf[len] = '\0';
+    return (depth == 0) ? outBuf : NULL;
+}
 
-    char jsonOnly[1024];
-    strncpy(jsonOnly, objStart, sizeof(jsonOnly) - 1);
-    jsonOnly[sizeof(jsonOnly) - 1] = '\0';
+char* extractAllJSON(char* src, size_t length)
+{
+    sendU2("Anfang:\r\n");
+    sendU3(src);
+    sendU2("Ende:\r\n");
 
-    jsmn_parser parser;
-    jsmntok_t tokens[256];
-    jsmn_init(&parser);
+    char result[length];
+    int startPos = 0;
 
-    int token_count = jsmn_parse(&parser, jsonOnly, strlen(jsonOnly), tokens, 256);
+    for (size_t i = 0; i < length; ++i)
+    {
+        if (src[i] == '{')
+        {
+            startPos = i;
+        }
 
-    if (token_count < 0) {
-        sendU2("Parse-Fehler\r\n");
-        return 1;
-    }
-
-    for (int i = 1; i < token_count; i++) {
-        if (jsoneq(jsonStart, &tokens[i], "current") == 0 && tokens[i+1].type == JSMN_OBJECT) {
-            int start = tokens[i+1].start;
-            int end   = tokens[i+1].end;
-            int len   = end - start;
-
-            char locationJson[512];
-            if (len < sizeof(locationJson)) {
-                strncpy(locationJson, jsonStart + start, len);
-                locationJson[len] = '\0';
-                sendU2("Location JSON:\r\n");
-                sendU2(locationJson);
-            } else {
-                sendU2("location JSON zu groß\r\n");
+        else if (src[i] == '}')
+        {
+            for (int j = startPos; j <= i; j++)
+            {
+                strcat(src, result);
             }
-            break;
+
+            result[i - startPos + 1] = '\0';
         }
     }
 
+    if (strlen(result) <= 0)
+    {
+        sendU2("Kein JSON-Objekt gefunden.\r\n");
+    }
+
+    return result;
+}
+
+void extractData(std::string content)
+{
+    Data data;
+    std::string temp;
+
+    if (content.length() <= 0)
+    {
+        sendU2("Kein Inhalt zum Extrahieren.\r\n");
+        return;
+    }
+
+    std::vector <std::string> types = {
+        "location",
+        "localtime",
+        "name",
+        "region",
+        "country",
+        "last_updated",
+        "temp_c",
+        "is_day",
+        "condition"
+    };
+
+    for (int i = 0; i < types.size(); i++)
+    {
+        i = content.find(types[i]) + types[i].length() + 3;
+
+    while (content[i] != '"')
+    {
+        temp = temp + content[i];
+        i++;
+    }
+}
 
 
+
+
+
+
+
+
+}
+
+int main()
+{
+    SysTick_Init();
+    UART2_Init(115200);
+    char UART2Response[RX_BUF_SIZE];
+
+    requestWeatherData(UART2Response);
+    delay(100);
+
+    char* jsonStart = strstr(UART2Response, "\r\n\r\n");
+
+    jsonStart += 4;
+
+
+    char* extracted = extract_first_json_object(jsonStart, UART2Response, RX_BUF_SIZE);
+    sendU2("Extrahiertes JSON:\r\n");
+
+    delay(100);
+
+    //extractData(extracted);
+    sendU2(extracted);
+    sendU2("Ende:\r\n");
 }
