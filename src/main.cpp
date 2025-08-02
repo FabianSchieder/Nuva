@@ -11,7 +11,34 @@ volatile uint16_t rx_head = 0;
 volatile uint16_t rx_tail = 0;
 volatile uint32_t systick_ms = 0;
 
-void extractData(char*);
+typedef struct
+{
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t day;
+    uint8_t month;
+    uint8_t year;
+} Time;
+typedef struct
+{
+    // ------------ location ------------
+    Time localTime;
+
+    std::string name;
+    std::string region;
+    std::string country;
+
+    // ------------ current ------------
+    Time lastUpdated;
+    float tempC;
+    bool isDay;
+
+    // ------------ condition ------------
+    std::string weather;
+} Data;
+Data weatherData;
+
+void extractData(std::string content);
 void requestTime();
 
 extern "C" void SysTick_Handler(void)
@@ -144,32 +171,7 @@ void UART3_Init(void)
     USART3->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
 }
 
-typedef struct
-{
-    uint8_t hour;
-    uint8_t minute;
-    uint8_t day;
-    uint8_t month;
-    uint8_t year;
-} Time;
 
-typedef struct
-{
-    // ------------ location ------------
-    Time localTime;
-
-    std::string name;
-    std::string region;
-    std::string country;
-
-    // ------------ current ------------
-    Time lastUpdated;
-    float tempC;
-    bool isDay;
-
-    // ------------ condition ------------
-    std::string weather;
-} Data;
 
 void requestWeatherData(char* dest)
 {
@@ -269,47 +271,160 @@ char* extractAllJSON(char* src, size_t length)
     return result;
 }
 
+
+void insertInData(std::string element, std::string type)
+{
+    if (type == "localtime")
+    {
+        weatherData.localTime.year = std::stoi(element.substr(0, 4));
+        weatherData.localTime.month = std::stoi(element.substr(5, 2));
+        weatherData.localTime.day = std::stoi(element.substr(8, 2));
+        weatherData.localTime.hour = std::stoi(element.substr(11, 2));
+        weatherData.localTime.minute = std::stoi(element.substr(14, 2));
+    }
+    else if (type == "name")
+    {
+        weatherData.name = element;
+    }
+    else if (type == "region")
+    {
+        weatherData.region = element;
+    }
+    else if (type == "country")
+    {
+        weatherData.country = element;
+    }
+    else if (type == "last_updated")
+    {
+        weatherData.lastUpdated.year = std::stoi(element.substr(0, 4));
+        weatherData.lastUpdated.month = std::stoi(element.substr(5, 2));
+        weatherData.lastUpdated.day = std::stoi(element.substr(8, 2));
+        weatherData.lastUpdated.hour = std::stoi(element.substr(11, 2));
+        weatherData.lastUpdated.minute = std::stoi(element.substr(14, 2));
+    }
+    else if (type == "temp_c")
+    {
+        weatherData.tempC = std::stof(element);
+    }
+    else if (type == "is_day")
+    {
+        weatherData.isDay = (element == "1");
+    }
+    else if (type == "weather")
+    {
+        weatherData.weather = element;
+    }
+}
+
+
 void extractData(std::string content)
 {
-    Data data;
     std::string temp;
+    int index = 0;
 
-    if (content.length() <= 0)
+    if (content.empty())
     {
         sendU2("Kein Inhalt zum Extrahieren.\r\n");
         return;
     }
 
-    std::vector <std::string> types = {
-        "location",
-        "localtime",
-        "name",
-        "region",
-        "country",
-        "last_updated",
-        "temp_c",
-        "is_day",
-        "condition"
+    std::vector<std::pair<std::string, bool>> fields = {
+        {"localtime", true},
+        {"name", true},
+        {"region", true},
+        {"country", true},
+        {"last_updated", true},
+        {"temp_c", false},
+        {"is_day", false},
+        {"\"condition\":{\"text\"", true}  // Achtung: das verschachtelte Feld
     };
 
-    for (int i = 0; i < types.size(); i++)
+    for (size_t i = 0; i < fields.size(); ++i)
     {
-        i = content.find(types[i]) + types[i].length() + 3;
+        auto& key = fields[i].first;
+        auto& isString = fields[i].second;
 
-    while (content[i] != '"')
-    {
-        temp = temp + content[i];
-        i++;
+        temp = "";
+        std::string searchKey = isString ? ("\"" + key + "\":\"") : ("\"" + key + "\":");
+
+        size_t pos = content.find(searchKey);
+        if (pos == std::string::npos)
+        {
+            std::string msg = "Typ nicht gefunden: " + key + "\r\n";
+            sendU2(msg.c_str());
+            continue;
+        }
+
+        index = pos + searchKey.length();
+
+        if (isString)
+        {
+            while (content[index] != '"' && index < content.length())
+            {
+                temp += content[index++];
+            }
+        }
+        else
+        {
+            while (content[index] != ',' && content[index] != '}' && index < content.length())
+            {
+                temp += content[index++];
+            }
+        }
+
+        std::string type = (key == "\"condition\":{\"text\"") ? "weather" : key;
+        insertInData(temp, type);
+
+        std::string info = "Eingefügt: " + type + " = " + temp + "\r\n";
+        sendU2(info.c_str());
+        delay(50);
     }
+
 }
 
 
 
+void printWeatherData()
+{
+    delay(100);
+    char buf[128];
 
+    snprintf(buf, sizeof(buf), "localtime: %02d:%02d %02d.%02d.%04d\r\n",
+             weatherData.localTime.hour,
+             weatherData.localTime.minute,
+             weatherData.localTime.day,
+             weatherData.localTime.month,
+             weatherData.localTime.year);
+    sendU2(buf);
 
+    delay(100);
 
+    sendU2(("name: " + weatherData.name + "\r\n").c_str());
+    delay(100);
+    sendU2(("region: " + weatherData.region + "\r\n").c_str());
+    delay(100);
+    sendU2(("country: " + weatherData.country + "\r\n").c_str());
+    delay(100);
 
+    snprintf(buf, sizeof(buf), "last_updated: %02d:%02d %02d.%02d.%04d\r\n",
+             weatherData.lastUpdated.hour,
+             weatherData.lastUpdated.minute,
+             weatherData.lastUpdated.day,
+             weatherData.lastUpdated.month,
+             weatherData.lastUpdated.year);
+    sendU2(buf);
+    delay(100);
 
+    snprintf(buf, sizeof(buf), "temp_c: %.2f\r\n", weatherData.tempC);
+    sendU2(buf);
+    delay(100);
+
+    snprintf(buf, sizeof(buf), "is_day: %s\r\n", weatherData.isDay ? "true" : "false");
+    sendU2(buf);
+    delay(100);
+
+    sendU2(("weather: " + weatherData.weather + "\r\n").c_str());
+    delay(100);
 }
 
 int main()
@@ -334,4 +449,12 @@ int main()
     //extractData(extracted);
     sendU2(extracted);
     sendU2("Ende:\r\n");
+
+    delay(100);
+
+    sendU2("Ausgewertete Wetterdaten:\r\n");
+    delay(100);
+    extractData(extracted);
+
+    printWeatherData();
 }
